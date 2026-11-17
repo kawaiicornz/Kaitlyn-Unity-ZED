@@ -147,7 +147,7 @@ public class BallLauncher : MonoBehaviour
 #if UNITY_6_OR_NEWER
                 rigidBody.linearVelocity = Vector3.zero;
 #else
-                rigidBody.velocity = Vector3.zero;
+                rigidBody.linearVelocity = Vector3.zero;
 #endif
                 rigidBody.isKinematic = false;
                 rigidBody.useGravity = true;
