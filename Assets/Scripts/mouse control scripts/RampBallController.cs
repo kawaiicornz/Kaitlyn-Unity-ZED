@@ -39,6 +39,13 @@ public class RampBallController : MonoBehaviour
     public Color hitColor = Color.green;   // ball turns this color when it lands on the platform
     public Color missColor = Color.red;    // ball turns this color when it lands on the floor without hitting the platform
 
+    [Header("Flight path line")]
+    public Color pathColor = Color.white;  // color of the line tracing the ball's flight
+    public float pathWidth = 0.02f;        // line thickness in world units
+    public float dashLength = 0.05f;       // length of each dash in world units
+    public float gapLength = 0.05f;        // length of the gap between dashes
+    public Material pathMaterial;          // optional: leave empty for a plain unlit dashed line
+
     [Header("Rolling")]
     public float radius = 0.1f;            // cylinder X scale 0.2 -> radius 0.1
     public bool invertRoll = false;        // tick if the ball spins the wrong way
@@ -66,6 +73,7 @@ public class RampBallController : MonoBehaviour
     Color originalColor;
     bool colorCaptured;
     bool hitPlatform;     // true once the ball has landed on top of the platform this round
+    LineRenderer path;    // white line drawn along the ball's flight (created in Play mode)
 
     // Platform snapshot taken at launch
     float platMinX, platMaxX, platTop, floorY;
@@ -103,8 +111,82 @@ public class RampBallController : MonoBehaviour
     public void ResetBall()
     {
         state = State.Following;
+        ClearPath();
         CaptureColor();
         if (ballRenderer != null) ballRenderer.material.color = originalColor;
+    }
+
+    // ---------------------------------------------------------------- flight path line
+
+    void EnsurePath()
+    {
+        if (path != null) return;
+
+        GameObject go = new GameObject("BallPath");
+        path = go.AddComponent<LineRenderer>();
+        path.useWorldSpace = true;
+        path.alignment = LineAlignment.View;
+        path.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        path.receiveShadows = false;
+        path.numCapVertices = 4;
+        path.numCornerVertices = 4;
+        path.widthMultiplier = pathWidth;
+        path.textureMode = LineTextureMode.Tile;
+
+        if (pathMaterial != null)
+        {
+            path.material = pathMaterial;
+        }
+        else
+        {
+            // Dashes come from a tiny generated texture: opaque for the dash, transparent for the gap.
+            const int texWidth = 64;
+            float dash = Mathf.Max(0.001f, dashLength);
+            float gap = Mathf.Max(0f, gapLength);
+            int dashPixels = Mathf.Clamp(Mathf.RoundToInt(texWidth * dash / (dash + gap)), 1, texWidth);
+
+            Texture2D tex = new Texture2D(texWidth, 1, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Repeat;
+            tex.filterMode = FilterMode.Point;
+            for (int i = 0; i < texWidth; i++)
+                tex.SetPixel(i, 0, i < dashPixels ? Color.white : new Color(1f, 1f, 1f, 0f));
+            tex.Apply();
+
+            Material mat = new Material(Shader.Find("Sprites/Default"));
+            mat.mainTexture = tex;
+            mat.mainTextureScale = new Vector2(1f / (dash + gap), 1f);   // one dash + gap per this many world units
+            path.material = mat;
+        }
+        path.startColor = pathColor;
+        path.endColor = pathColor;
+        path.positionCount = 0;
+    }
+
+    // Begins a fresh line at the point where the ball leaves the ledge.
+    void StartPath()
+    {
+        if (!Application.isPlaying) return;
+        EnsurePath();
+        path.positionCount = 0;
+        AddPathPoint();
+    }
+
+    void AddPathPoint()
+    {
+        if (path == null) return;
+        int n = path.positionCount;
+        path.positionCount = n + 1;
+        path.SetPosition(n, new Vector3(pos.x, pos.y, transform.position.z));
+    }
+
+    void ClearPath()
+    {
+        if (path != null) path.positionCount = 0;
+    }
+
+    void OnDestroy()
+    {
+        if (path != null) Destroy(path.gameObject);
     }
 
     void RegisterMiss()
@@ -232,6 +314,7 @@ public class RampBallController : MonoBehaviour
             pos.x = ledgeEdgeX;
             vel = new Vector2(-rampSpeed, 0f);
             state = State.Airborne;
+            StartPath();
         }
     }
 
@@ -254,6 +337,7 @@ public class RampBallController : MonoBehaviour
                 pos = new Vector2(xAt, platTop + radius);
                 vel.y = 0f;
                 state = State.PlatformRoll;
+                AddPathPoint();
                 hitPlatform = true;
                 CaptureColor();
                 if (ballRenderer != null) ballRenderer.material.color = hitColor;
@@ -275,6 +359,8 @@ public class RampBallController : MonoBehaviour
             // Landed on the floor without ever landing on the platform: a miss.
             if (!hitPlatform) RegisterMiss();
         }
+
+        AddPathPoint();
     }
 
     void PushOutOfPlatform()
